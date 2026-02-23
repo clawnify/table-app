@@ -1,0 +1,9 @@
+name = "table-app"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "table-app-db"
+database_id = "YOUR_DATABASE_ID_HERE"

@@ -1,15 +1,13 @@
 import { Hono } from "hono";
-import { serve } from "@hono/node-server";
-import { serveStatic } from "@hono/node-server/serve-static";
 import { query, get, run, transaction } from "./db";
 
 const app = new Hono();
 
 // ── Tables ──────────────────────────────────────────────────────────
 
-app.get("/api/tables", (c) => {
+app.get("/api/tables", async (c) => {
   try {
-    const tables = query(
+    const tables = await query(
       `SELECT t.*, (SELECT COUNT(*) FROM _columns WHERE table_id = t.id) as column_count,
               (SELECT COUNT(*) FROM _rows WHERE table_id = t.id) as row_count
        FROM _tables t ORDER BY t.position, t.created_at`,
@@ -26,11 +24,11 @@ app.post("/api/tables", async (c) => {
     const name = (body.name || "").trim();
     if (!name) return c.json({ error: "Name is required" }, 400);
 
-    const maxPos = get<{ mp: number }>("SELECT COALESCE(MAX(position), -1) as mp FROM _tables");
+    const maxPos = await get<{ mp: number }>("SELECT COALESCE(MAX(position), -1) as mp FROM _tables");
     const tableId = crypto.randomUUID();
 
-    transaction(() => {
-      run("INSERT INTO _tables (id, name, position) VALUES (?, ?, ?)", tableId, name, (maxPos?.mp ?? -1) + 1);
+    await transaction(async () => {
+      await run("INSERT INTO _tables (id, name, position) VALUES (?, ?, ?)", tableId, name, (maxPos?.mp ?? -1) + 1);
 
       const columns: { name: string; type: string }[] = body.columns;
       if (columns && Array.isArray(columns) && columns.length > 0) {
@@ -38,20 +36,20 @@ app.post("/api/tables", async (c) => {
           const col = columns[i];
           const colName = (col.name || "").trim() || `Column ${i + 1}`;
           const colType = col.type === "number" ? "number" : "text";
-          run(
+          await run(
             "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
             crypto.randomUUID(), tableId, colName, colType, i,
           );
         }
       } else {
-        run(
+        await run(
           "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
           crypto.randomUUID(), tableId, "Name", "text", 0,
         );
       }
     });
 
-    const table = get("SELECT * FROM _tables WHERE id = ?", tableId);
+    const table = await get("SELECT * FROM _tables WHERE id = ?", tableId);
     return c.json({ table }, 201);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -65,23 +63,20 @@ app.put("/api/tables/:id", async (c) => {
     const name = (body.name || "").trim();
     if (!name) return c.json({ error: "Name is required" }, 400);
 
-    const result = run("UPDATE _tables SET name = ?, updated_at = datetime('now') WHERE id = ?", name, id);
+    const result = await run("UPDATE _tables SET name = ?, updated_at = datetime('now') WHERE id = ?", name, id);
     if (result.changes === 0) return c.json({ error: "Table not found" }, 404);
 
-    const table = get("SELECT * FROM _tables WHERE id = ?", id);
+    const table = await get("SELECT * FROM _tables WHERE id = ?", id);
     return c.json({ table });
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
   }
 });
 
-app.delete("/api/tables/:id", (c) => {
+app.delete("/api/tables/:id", async (c) => {
   try {
     const id = c.req.param("id");
-    const count = get<{ count: number }>("SELECT COUNT(*) as count FROM _tables");
-    if (count && count.count <= 1) return c.json({ error: "Cannot delete the last table" }, 400);
-
-    const result = run("DELETE FROM _tables WHERE id = ?", id);
+    const result = await run("DELETE FROM _tables WHERE id = ?", id);
     if (result.changes === 0) return c.json({ error: "Table not found" }, 404);
 
     return c.json({ ok: true });
@@ -92,10 +87,10 @@ app.delete("/api/tables/:id", (c) => {
 
 // ── Columns ─────────────────────────────────────────────────────────
 
-app.get("/api/tables/:tid/columns", (c) => {
+app.get("/api/tables/:tid/columns", async (c) => {
   try {
     const tid = c.req.param("tid");
-    const columns = query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", tid);
+    const columns = await query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", tid);
     return c.json({ columns });
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -105,23 +100,23 @@ app.get("/api/tables/:tid/columns", (c) => {
 app.post("/api/tables/:tid/columns", async (c) => {
   try {
     const tid = c.req.param("tid");
-    const table = get("SELECT id FROM _tables WHERE id = ?", tid);
+    const table = await get("SELECT id FROM _tables WHERE id = ?", tid);
     if (!table) return c.json({ error: "Table not found" }, 404);
 
     const body = await c.req.json();
     const name = (body.name || "").trim() || "New Column";
     const type = body.type === "number" ? "number" : "text";
 
-    const maxPos = get<{ mp: number }>(
+    const maxPos = await get<{ mp: number }>(
       "SELECT COALESCE(MAX(position), -1) as mp FROM _columns WHERE table_id = ?", tid,
     );
     const colId = crypto.randomUUID();
-    run(
+    await run(
       "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
       colId, tid, name, type, (maxPos?.mp ?? -1) + 1,
     );
 
-    const col = get("SELECT * FROM _columns WHERE id = ?", colId);
+    const col = await get("SELECT * FROM _columns WHERE id = ?", colId);
     return c.json({ column: col }, 201);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -152,32 +147,32 @@ app.put("/api/tables/:tid/columns/:id", async (c) => {
     setClauses.push("updated_at = datetime('now')");
     setParams.push(id);
 
-    const result = run("UPDATE _columns SET " + setClauses.join(", ") + " WHERE id = ?", ...setParams);
+    const result = await run("UPDATE _columns SET " + setClauses.join(", ") + " WHERE id = ?", ...setParams);
     if (result.changes === 0) return c.json({ error: "Column not found" }, 404);
 
-    const col = get("SELECT * FROM _columns WHERE id = ?", id);
+    const col = await get("SELECT * FROM _columns WHERE id = ?", id);
     return c.json({ column: col });
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
   }
 });
 
-app.delete("/api/tables/:tid/columns/:id", (c) => {
+app.delete("/api/tables/:tid/columns/:id", async (c) => {
   try {
     const tid = c.req.param("tid");
     const id = c.req.param("id");
 
-    const col = get<{ id: string }>("SELECT id FROM _columns WHERE id = ? AND table_id = ?", id, tid);
+    const col = await get<{ id: string }>("SELECT id FROM _columns WHERE id = ? AND table_id = ?", id, tid);
     if (!col) return c.json({ error: "Column not found" }, 404);
 
-    transaction(() => {
-      run("DELETE FROM _columns WHERE id = ?", id);
+    await transaction(async () => {
+      await run("DELETE FROM _columns WHERE id = ?", id);
       // Remove this column's data from all rows
-      const rows = query<{ id: number; data: string }>("SELECT id, data FROM _rows WHERE table_id = ?", tid);
+      const rows = await query<{ id: number; data: string }>("SELECT id, data FROM _rows WHERE table_id = ?", tid);
       for (const row of rows) {
         const data = JSON.parse(row.data);
         delete data[id];
-        run("UPDATE _rows SET data = ?, updated_at = datetime('now') WHERE id = ?", JSON.stringify(data), row.id);
+        await run("UPDATE _rows SET data = ?, updated_at = datetime('now') WHERE id = ?", JSON.stringify(data), row.id);
       }
     });
 
@@ -194,13 +189,13 @@ app.put("/api/tables/:tid/columns/reorder", async (c) => {
     const ids: string[] = body.ids;
     if (!Array.isArray(ids)) return c.json({ error: "ids array required" }, 400);
 
-    transaction(() => {
+    await transaction(async () => {
       for (let i = 0; i < ids.length; i++) {
-        run("UPDATE _columns SET position = ?, updated_at = datetime('now') WHERE id = ? AND table_id = ?", i, ids[i], tid);
+        await run("UPDATE _columns SET position = ?, updated_at = datetime('now') WHERE id = ? AND table_id = ?", i, ids[i], tid);
       }
     });
 
-    const columns = query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", tid);
+    const columns = await query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", tid);
     return c.json({ columns });
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -209,7 +204,7 @@ app.put("/api/tables/:tid/columns/reorder", async (c) => {
 
 // ── Rows ────────────────────────────────────────────────────────────
 
-app.get("/api/tables/:tid/rows", (c) => {
+app.get("/api/tables/:tid/rows", async (c) => {
   try {
     const tid = c.req.param("tid");
     const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
@@ -242,7 +237,7 @@ app.get("/api/tables/:tid/rows", (c) => {
 
     const whereSQL = " WHERE " + whereClauses.join(" AND ");
 
-    const countResult = get<{ total: number }>(
+    const countResult = await get<{ total: number }>(
       "SELECT COUNT(*) as total FROM _rows" + whereSQL,
       ...whereParams,
     );
@@ -259,7 +254,7 @@ app.get("/api/tables/:tid/rows", (c) => {
       orderSQL = ` ORDER BY id ${order}`;
     }
 
-    const rows = query(
+    const rows = await query(
       "SELECT * FROM _rows" + whereSQL + orderSQL + " LIMIT ? OFFSET ?",
       ...whereParams,
       limit,
@@ -284,18 +279,18 @@ app.get("/api/tables/:tid/rows", (c) => {
 app.post("/api/tables/:tid/rows", async (c) => {
   try {
     const tid = c.req.param("tid");
-    const table = get("SELECT id FROM _tables WHERE id = ?", tid);
+    const table = await get("SELECT id FROM _tables WHERE id = ?", tid);
     if (!table) return c.json({ error: "Table not found" }, 404);
 
     const body = await c.req.json();
     const data = body.data || {};
 
-    run(
+    await run(
       "INSERT INTO _rows (table_id, data) VALUES (?, ?)",
       tid, JSON.stringify(data),
     );
 
-    const inserted = get("SELECT * FROM _rows WHERE rowid = last_insert_rowid()") as {
+    const inserted = await get("SELECT * FROM _rows WHERE rowid = last_insert_rowid()") as {
       id: number; table_id: string; data: string; created_at: string; updated_at: string;
     };
 
@@ -312,18 +307,18 @@ app.put("/api/tables/:tid/rows/:id", async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 
-    const existing = get<{ data: string }>("SELECT data FROM _rows WHERE id = ?", id);
+    const existing = await get<{ data: string }>("SELECT data FROM _rows WHERE id = ?", id);
     if (!existing) return c.json({ error: "Row not found" }, 404);
 
     const body = await c.req.json();
     const newData = { ...JSON.parse(existing.data), ...body.data };
 
-    run(
+    await run(
       "UPDATE _rows SET data = ?, updated_at = datetime('now') WHERE id = ?",
       JSON.stringify(newData), id,
     );
 
-    const updated = get("SELECT * FROM _rows WHERE id = ?", id) as {
+    const updated = await get("SELECT * FROM _rows WHERE id = ?", id) as {
       id: number; table_id: string; data: string; created_at: string; updated_at: string;
     };
     return c.json({ row: { ...updated, data: JSON.parse(updated.data) } });
@@ -332,12 +327,12 @@ app.put("/api/tables/:tid/rows/:id", async (c) => {
   }
 });
 
-app.delete("/api/tables/:tid/rows/:id", (c) => {
+app.delete("/api/tables/:tid/rows/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 
-    const result = run("DELETE FROM _rows WHERE id = ?", id);
+    const result = await run("DELETE FROM _rows WHERE id = ?", id);
     if (result.changes === 0) return c.json({ error: "Row not found" }, 404);
 
     return c.json({ ok: true });
@@ -347,13 +342,13 @@ app.delete("/api/tables/:tid/rows/:id", (c) => {
 });
 
 // CSV export
-app.get("/api/tables/:tid/export/csv", (c) => {
+app.get("/api/tables/:tid/export/csv", async (c) => {
   try {
     const tid = c.req.param("tid");
-    const columns = query<{ id: string; name: string }>(
+    const columns = await query<{ id: string; name: string }>(
       "SELECT id, name FROM _columns WHERE table_id = ? ORDER BY position", tid,
     );
-    const rows = query<{ id: number; data: string; created_at: string; updated_at: string }>(
+    const rows = await query<{ id: number; data: string; created_at: string; updated_at: string }>(
       "SELECT * FROM _rows WHERE table_id = ? ORDER BY id DESC", tid,
     );
 
@@ -378,7 +373,7 @@ app.get("/api/tables/:tid/export/csv", (c) => {
       csv += values.map(escapeCsv).join(",") + "\n";
     }
 
-    const tableName = get<{ name: string }>("SELECT name FROM _tables WHERE id = ?", tid);
+    const tableName = await get<{ name: string }>("SELECT name FROM _tables WHERE id = ?", tid);
     const filename = (tableName?.name || "export").replace(/[^a-zA-Z0-9-_]/g, "_");
 
     c.header("Content-Type", "text/csv; charset=utf-8");
@@ -388,15 +383,5 @@ app.get("/api/tables/:tid/export/csv", (c) => {
     return c.json({ error: (err as Error).message }, 500);
   }
 });
-
-// Production: serve Vite build output
-if (process.env.NODE_ENV === "production") {
-  app.use("/*", serveStatic({ root: "./dist" }));
-  app.get("*", serveStatic({ root: "./dist", path: "index.html" }));
-}
-
-const port = parseInt(process.env.PORT || "3002", 10);
-console.log(`Table API running at http://localhost:${port}`);
-serve({ fetch: app.fetch, port });
 
 export default app;

@@ -14,33 +14,32 @@ db.pragma("foreign_keys = ON");
 const schema = readFileSync(join(__dirname, "schema.sql"), "utf-8");
 db.exec(schema);
 
-// Seed default table if none exist
-const tableCount = db.prepare("SELECT COUNT(*) as count FROM _tables").get() as { count: number };
-if (tableCount.count === 0) {
-  const tableId = crypto.randomUUID();
-  const colId = crypto.randomUUID();
-  db.prepare("INSERT INTO _tables (id, name, position) VALUES (?, ?, ?)").run(tableId, "Table 1", 0);
-  db.prepare("INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)").run(colId, tableId, "Name", "text", 0);
-}
-
-export function query<T = Record<string, unknown>>(
+export async function query<T = Record<string, unknown>>(
   sql: string,
   ...params: unknown[]
-): T[] {
+): Promise<T[]> {
   return db.prepare(sql).all(...params) as T[];
 }
 
-export function get<T = Record<string, unknown>>(
+export async function get<T = Record<string, unknown>>(
   sql: string,
   ...params: unknown[]
-): T | undefined {
+): Promise<T | undefined> {
   return db.prepare(sql).get(...params) as T | undefined;
 }
 
-export function run(sql: string, ...params: unknown[]) {
+export async function run(sql: string, ...params: unknown[]) {
   return db.prepare(sql).run(...params);
 }
 
-export function transaction<T>(fn: () => T): T {
-  return db.transaction(fn)();
+export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
+  db.exec("BEGIN");
+  try {
+    const result = await fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
 }

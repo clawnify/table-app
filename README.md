@@ -1,4 +1,4 @@
-# Clawnify Table App: The Open-Source Clay Alternative for SaaS
+# OpenClaw Table App: The Open-Source Clay Alternative for SaaS
 
 A flexible, multi-table data UI for building SaaS dashboards, CRM tools, and spreadsheet-like apps. Part of the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Zero cloud dependencies — runs locally with SQLite.
 

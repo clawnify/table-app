@@ -1,0 +1,29 @@
+{
+  "name": "Table App",
+  "description": "Multi-table data management UI with dynamic columns, inline editing, sorting, filtering, pagination, and CSV export. Like Airtable or Clay. Best for spreadsheet-like apps, data dashboards, inventory tracking, or any structured data CRUD.",
+  "framework": "preact+hono",
+  "files": [
+    "src/server/index.ts",
+    "src/server/db.ts",
+    "src/server/schema.sql",
+    "src/client/app.tsx",
+    "src/client/main.tsx",
+    "src/client/api.ts",
+    "src/client/types.ts",
+    "src/client/context.tsx",
+    "src/client/styles.css",
+    "src/client/hooks/use-table.ts",
+    "src/client/components/data-table.tsx",
+    "src/client/components/table-tabs.tsx",
+    "src/client/components/table-header.tsx",
+    "src/client/components/table-row.tsx",
+    "src/client/components/add-row-form.tsx",
+    "src/client/components/toolbar.tsx",
+    "src/client/components/pagination.tsx",
+    "src/client/components/error-banner.tsx",
+    "package.json",
+    "vite.config.ts",
+    "tsconfig.json",
+    "index.html"
+  ]
+}

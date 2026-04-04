@@ -4,6 +4,8 @@ A flexible, multi-table data UI for building SaaS dashboards, CRM tools, and spr
 
 Built with **Preact + Hono + SQLite**. Ships with a dual-mode UI: one for humans (click-to-edit, drag-to-reorder) and one for AI agents (explicit buttons, large targets).
 
+<img width="1024" height="591" alt="Image" src="https://github.com/user-attachments/assets/0d8c2eef-94e8-45ba-b6cd-a4cd3185134e" />
+
 ## What Is It?
 
 Clawnify Table App is a production-ready table UI framework designed for the OpenClaw community. Think of it as an open-source Clay alternative — a data table you can self-host, customize, and embed in any SaaS product.

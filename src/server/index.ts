@@ -1,7 +1,14 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { query, get, run, transaction } from "./db";
+import { initDB, query, get, run } from "./db.js";
 
-const app = new OpenAPIHono();
+type Env = { Bindings: { DB: D1Database } };
+
+const app = new OpenAPIHono<Env>();
+
+app.use("*", async (c, next) => {
+  initDB(c.env.DB);
+  await next();
+});
 
 // ── Shared Schemas ─────────────────────────────────────────────────
 
@@ -112,29 +119,27 @@ app.openapi(createTable, async (c) => {
     const maxPos = await get<{ mp: number }>("SELECT COALESCE(MAX(position), -1) as mp FROM _tables");
     const tableId = crypto.randomUUID();
 
-    await transaction(async () => {
-      await run("INSERT INTO _tables (id, name, position) VALUES (?, ?, ?)", tableId, name, (maxPos?.mp ?? -1) + 1);
+    await run("INSERT INTO _tables (id, name, position) VALUES (?, ?, ?)", [tableId, name, (maxPos?.mp ?? -1) + 1]);
 
-      const columns = body.columns;
-      if (columns && columns.length > 0) {
-        for (let i = 0; i < columns.length; i++) {
-          const col = columns[i];
-          const colName = (col.name || "").trim() || `Column ${i + 1}`;
-          const colType = col.type === "number" ? "number" : "text";
-          await run(
-            "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
-            crypto.randomUUID(), tableId, colName, colType, i,
-          );
-        }
-      } else {
+    const columns = body.columns;
+    if (columns && columns.length > 0) {
+      for (let i = 0; i < columns.length; i++) {
+        const col = columns[i];
+        const colName = (col.name || "").trim() || `Column ${i + 1}`;
+        const colType = col.type === "number" ? "number" : "text";
         await run(
           "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
-          crypto.randomUUID(), tableId, "Name", "text", 0,
+          [crypto.randomUUID(), tableId, colName, colType, i],
         );
       }
-    });
+    } else {
+      await run(
+        "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
+        [crypto.randomUUID(), tableId, "Name", "text", 0],
+      );
+    }
 
-    const table = await get("SELECT * FROM _tables WHERE id = ?", tableId);
+    const table = await get("SELECT * FROM _tables WHERE id = ?", [tableId]);
     return c.json({ table }, 201);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -168,10 +173,10 @@ app.openapi(renameTable, async (c) => {
     const trimmed = name.trim();
     if (!trimmed) return c.json({ error: "Name is required" }, 400);
 
-    const result = await run("UPDATE _tables SET name = ?, updated_at = datetime('now') WHERE id = ?", trimmed, id);
+    const result = await run("UPDATE _tables SET name = ?, updated_at = datetime('now') WHERE id = ?", [trimmed, id]);
     if (result.changes === 0) return c.json({ error: "Table not found" }, 404);
 
-    const table = await get("SELECT * FROM _tables WHERE id = ?", id);
+    const table = await get("SELECT * FROM _tables WHERE id = ?", [id]);
     return c.json({ table }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -194,7 +199,7 @@ const deleteTable = createRoute({
 app.openapi(deleteTable, async (c) => {
   try {
     const { id } = c.req.valid("param");
-    const result = await run("DELETE FROM _tables WHERE id = ?", id);
+    const result = await run("DELETE FROM _tables WHERE id = ?", [id]);
     if (result.changes === 0) return c.json({ error: "Table not found" }, 404);
     return c.json({ ok: true }, 200);
   } catch (err: unknown) {
@@ -219,7 +224,7 @@ const listColumns = createRoute({
 app.openapi(listColumns, async (c) => {
   try {
     const { tid } = c.req.valid("param");
-    const columns = await query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", tid);
+    const columns = await query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", [tid]);
     return c.json({ columns }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -255,7 +260,7 @@ const addColumn = createRoute({
 app.openapi(addColumn, async (c) => {
   try {
     const { tid } = c.req.valid("param");
-    const table = await get("SELECT id FROM _tables WHERE id = ?", tid);
+    const table = await get("SELECT id FROM _tables WHERE id = ?", [tid]);
     if (!table) return c.json({ error: "Table not found" }, 404);
 
     const body = c.req.valid("json");
@@ -263,15 +268,15 @@ app.openapi(addColumn, async (c) => {
     const type = body.type === "number" ? "number" : "text";
 
     const maxPos = await get<{ mp: number }>(
-      "SELECT COALESCE(MAX(position), -1) as mp FROM _columns WHERE table_id = ?", tid,
+      "SELECT COALESCE(MAX(position), -1) as mp FROM _columns WHERE table_id = ?", [tid],
     );
     const colId = crypto.randomUUID();
     await run(
       "INSERT INTO _columns (id, table_id, name, type, position) VALUES (?, ?, ?, ?, ?)",
-      colId, tid, name, type, (maxPos?.mp ?? -1) + 1,
+      [colId, tid, name, type, (maxPos?.mp ?? -1) + 1],
     );
 
-    const col = await get("SELECT * FROM _columns WHERE id = ?", colId);
+    const col = await get("SELECT * FROM _columns WHERE id = ?", [colId]);
     return c.json({ column: col }, 201);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -329,10 +334,10 @@ app.openapi(updateColumn, async (c) => {
     setClauses.push("updated_at = datetime('now')");
     setParams.push(id);
 
-    const result = await run("UPDATE _columns SET " + setClauses.join(", ") + " WHERE id = ?", ...setParams);
+    const result = await run("UPDATE _columns SET " + setClauses.join(", ") + " WHERE id = ?", setParams);
     if (result.changes === 0) return c.json({ error: "Column not found" }, 404);
 
-    const col = await get("SELECT * FROM _columns WHERE id = ?", id);
+    const col = await get("SELECT * FROM _columns WHERE id = ?", [id]);
     return c.json({ column: col }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -356,18 +361,16 @@ app.openapi(deleteColumn, async (c) => {
   try {
     const { tid, id } = c.req.valid("param");
 
-    const col = await get<{ id: string }>("SELECT id FROM _columns WHERE id = ? AND table_id = ?", id, tid);
+    const col = await get<{ id: string }>("SELECT id FROM _columns WHERE id = ? AND table_id = ?", [id, tid]);
     if (!col) return c.json({ error: "Column not found" }, 404);
 
-    await transaction(async () => {
-      await run("DELETE FROM _columns WHERE id = ?", id);
-      const rows = await query<{ id: number; data: string }>("SELECT id, data FROM _rows WHERE table_id = ?", tid);
-      for (const row of rows) {
-        const data = JSON.parse(row.data);
-        delete data[id];
-        await run("UPDATE _rows SET data = ?, updated_at = datetime('now') WHERE id = ?", JSON.stringify(data), row.id);
-      }
-    });
+    await run("DELETE FROM _columns WHERE id = ?", [id]);
+    const rows = await query<{ id: number; data: string }>("SELECT id, data FROM _rows WHERE table_id = ?", [tid]);
+    for (const row of rows) {
+      const data = JSON.parse(row.data);
+      delete data[id];
+      await run("UPDATE _rows SET data = ?, updated_at = datetime('now') WHERE id = ?", [JSON.stringify(data), row.id]);
+    }
 
     return c.json({ ok: true }, 200);
   } catch (err: unknown) {
@@ -405,13 +408,11 @@ app.openapi(reorderColumns, async (c) => {
     const { tid } = c.req.valid("param");
     const { ids } = c.req.valid("json");
 
-    await transaction(async () => {
-      for (let i = 0; i < ids.length; i++) {
-        await run("UPDATE _columns SET position = ?, updated_at = datetime('now') WHERE id = ? AND table_id = ?", i, ids[i], tid);
-      }
-    });
+    for (let i = 0; i < ids.length; i++) {
+      await run("UPDATE _columns SET position = ?, updated_at = datetime('now') WHERE id = ? AND table_id = ?", [i, ids[i], tid]);
+    }
 
-    const columns = await query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", tid);
+    const columns = await query("SELECT * FROM _columns WHERE table_id = ? ORDER BY position", [tid]);
     return c.json({ columns }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -487,25 +488,26 @@ app.openapi(listRows, async (c) => {
 
     const countResult = await get<{ total: number }>(
       "SELECT COUNT(*) as total FROM _rows" + whereSQL,
-      ...whereParams,
+      [...whereParams],
     );
     const total = countResult?.total || 0;
 
     let orderSQL: string;
+    const queryParams = [...whereParams];
     if (sortCol === "id" || sortCol === "created_at" || sortCol === "updated_at") {
       orderSQL = ` ORDER BY ${sortCol} ${order}`;
     } else if (/^[0-9a-f-]{36}$/i.test(sortCol)) {
       orderSQL = ` ORDER BY json_extract(data, '$.' || ?) ${order}`;
-      whereParams.push(sortCol);
+      queryParams.push(sortCol);
     } else {
       orderSQL = ` ORDER BY id ${order}`;
     }
 
+    queryParams.push(limit, offset);
+
     const rows = await query(
       "SELECT * FROM _rows" + whereSQL + orderSQL + " LIMIT ? OFFSET ?",
-      ...whereParams,
-      limit,
-      offset,
+      queryParams,
     );
 
     const parsed = (rows as { id: number; table_id: string; data: string; created_at: string; updated_at: string }[]).map((r) => ({
@@ -550,18 +552,18 @@ const createRow = createRoute({
 app.openapi(createRow, async (c) => {
   try {
     const { tid } = c.req.valid("param");
-    const table = await get("SELECT id FROM _tables WHERE id = ?", tid);
+    const table = await get("SELECT id FROM _tables WHERE id = ?", [tid]);
     if (!table) return c.json({ error: "Table not found" }, 404);
 
     const body = c.req.valid("json");
     const data = body.data || {};
 
-    await run(
+    const result = await run(
       "INSERT INTO _rows (table_id, data) VALUES (?, ?)",
-      tid, JSON.stringify(data),
+      [tid, JSON.stringify(data)],
     );
 
-    const inserted = await get("SELECT * FROM _rows WHERE rowid = last_insert_rowid()") as {
+    const inserted = await get("SELECT * FROM _rows WHERE id = ?", [result.lastInsertRowid]) as {
       id: number; table_id: string; data: string; created_at: string; updated_at: string;
     };
 
@@ -605,7 +607,7 @@ app.openapi(updateRow, async (c) => {
     const rowId = parseInt(id, 10);
     if (isNaN(rowId)) return c.json({ error: "Invalid ID" }, 400);
 
-    const existing = await get<{ data: string }>("SELECT data FROM _rows WHERE id = ?", rowId);
+    const existing = await get<{ data: string }>("SELECT data FROM _rows WHERE id = ?", [rowId]);
     if (!existing) return c.json({ error: "Row not found" }, 404);
 
     const body = c.req.valid("json");
@@ -613,10 +615,10 @@ app.openapi(updateRow, async (c) => {
 
     await run(
       "UPDATE _rows SET data = ?, updated_at = datetime('now') WHERE id = ?",
-      JSON.stringify(newData), rowId,
+      [JSON.stringify(newData), rowId],
     );
 
-    const updated = await get("SELECT * FROM _rows WHERE id = ?", rowId) as {
+    const updated = await get("SELECT * FROM _rows WHERE id = ?", [rowId]) as {
       id: number; table_id: string; data: string; created_at: string; updated_at: string;
     };
     return c.json({ row: { ...updated, data: JSON.parse(updated.data) } }, 200);
@@ -645,7 +647,7 @@ app.openapi(deleteRow, async (c) => {
     const rowId = parseInt(id, 10);
     if (isNaN(rowId)) return c.json({ error: "Invalid ID" }, 400);
 
-    const result = await run("DELETE FROM _rows WHERE id = ?", rowId);
+    const result = await run("DELETE FROM _rows WHERE id = ?", [rowId]);
     if (result.changes === 0) return c.json({ error: "Row not found" }, 404);
 
     return c.json({ ok: true }, 200);
@@ -672,10 +674,10 @@ app.openapi(exportCsv, async (c) => {
   try {
     const { tid } = c.req.valid("param");
     const columns = await query<{ id: string; name: string }>(
-      "SELECT id, name FROM _columns WHERE table_id = ? ORDER BY position", tid,
+      "SELECT id, name FROM _columns WHERE table_id = ? ORDER BY position", [tid],
     );
     const rows = await query<{ id: number; data: string; created_at: string; updated_at: string }>(
-      "SELECT * FROM _rows WHERE table_id = ? ORDER BY id DESC", tid,
+      "SELECT * FROM _rows WHERE table_id = ? ORDER BY id DESC", [tid],
     );
 
     const headers = ["id", ...columns.map((col) => col.name), "created_at", "updated_at"];
@@ -699,7 +701,7 @@ app.openapi(exportCsv, async (c) => {
       csv += values.map(escapeCsv).join(",") + "\n";
     }
 
-    const tableName = await get<{ name: string }>("SELECT name FROM _tables WHERE id = ?", tid);
+    const tableName = await get<{ name: string }>("SELECT name FROM _tables WHERE id = ?", [tid]);
     const filename = (tableName?.name || "export").replace(/[^a-zA-Z0-9-_]/g, "_");
 
     c.header("Content-Type", "text/csv; charset=utf-8");
